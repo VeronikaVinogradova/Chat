@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Expand, LayoutGrid, X, ArrowRight } from "lucide-react";
+import { LayoutGrid, X, ArrowRight } from "lucide-react";
 
 /* Иконка чата: белый заполненный бабл с тремя строками */
 function ChatBubbleIcon() {
@@ -145,11 +145,7 @@ export default function ChatWidget() {
                     : "border-[#E9E9EB] text-[#42454C] hover:bg-[#F6F6F7]"
                 }`}
               >
-                {view === "chat" ? (
-                  <Expand className="size-5" strokeWidth={1.7} />
-                ) : (
-                  <LayoutGrid className="size-5" strokeWidth={1.7} />
-                )}
+                <LayoutGrid className="size-5" strokeWidth={1.7} />
               </button>
               <button
                 type="button"
