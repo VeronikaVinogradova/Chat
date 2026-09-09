@@ -8,6 +8,7 @@ import {
   Check,
   Sparkles,
   TriangleAlert,
+  ChevronDown,
 } from "lucide-react";
 import {
   agentReply,
@@ -91,11 +92,11 @@ const helpAgents: Agent[] = [
 
 /* Подсказки покрывают все ветки маршрутизации для юзабилити-теста */
 const suggestions = [
-  { label: "Выбрать услуги", accent: false, text: "Хочу выбрать услуги для АТС" },
-  { label: "Загрузить номера", accent: true, text: "Загрузить номера" },
-  { label: "Не работает запись звонков", accent: false, text: "Не работает запись звонков" },
-  { label: "Спасибо менеджеру!", accent: false, text: "Спасибо менеджеру, всё решили быстро!" },
-  { label: "Добавьте тёмную тему", accent: false, text: "Добавьте тёмную тему в кабинет" },
+  { label: "Выбрать услуги", text: "Хочу выбрать услуги для АТС" },
+  { label: "Загрузить номера", text: "Загрузить номера" },
+  { label: "Не работает запись звонков", text: "Не работает запись звонков" },
+  { label: "Спасибо менеджеру!", text: "Спасибо менеджеру, всё решили быстро!" },
+  { label: "Добавьте тёмную тему", text: "Добавьте тёмную тему в кабинет" },
 ];
 
 type TicketStatus = "inwork" | "done";
@@ -130,8 +131,8 @@ function MessageRow({ m }: { m: Msg }) {
     case "greeting":
       return (
         <p className="max-w-[300px] text-[14px] leading-5 text-[#181A25]">
-          Для загрузки номера могу помочь с перенесением номера, добавлением новых
-          номеров или их покупкой
+          Напишите любой вопрос одним сообщением — зарегистрирую инцидент, подключу
+          менеджера или передам отзыв. А ещё помогу настроить АТС по шагам.
         </p>
       );
     case "user":
@@ -220,6 +221,7 @@ export default function ChatWidget() {
   const [messages, setMessages] = useState<Msg[]>([{ id: 0, kind: "greeting" }]);
   const [activeAgent, setActiveAgent] = useState<Agent | null>(null);
   const [typing, setTyping] = useState(false);
+  const [chipsOpen, setChipsOpen] = useState(true);
 
   const nextId = useRef(1);
   const ticketNo = useRef(5721);
@@ -403,22 +405,34 @@ export default function ChatWidget() {
                   aria-label="Сообщение в чат"
                   className="h-11 w-full rounded-xl bg-[#EFEFF1] px-4 text-[14px] text-[#181A25] outline-none placeholder:text-[#868894]"
                 />
-                <div className="mt-3 flex flex-wrap gap-3">
-                  {suggestions.map((s) => (
-                    <button
-                      key={s.label}
-                      type="button"
-                      onClick={() => send(s.text)}
-                      className={`flex h-11 items-center rounded-xl px-4 text-[14px] transition-colors cursor-pointer ${
-                        s.accent
-                          ? "bg-[#FDD835] text-[#181A25] hover:bg-[#F5CE0A]"
-                          : "bg-[#EFEFF1] text-[#181A25] hover:bg-[#E5E5E8]"
-                      }`}
-                    >
-                      {s.label}
-                    </button>
-                  ))}
+                <div className="mt-2.5">
+                  <button
+                    type="button"
+                    aria-expanded={chipsOpen}
+                    onClick={() => setChipsOpen((v) => !v)}
+                    className="flex items-center gap-1 text-[13px] text-[#868894] transition-colors hover:text-[#42454C] cursor-pointer"
+                  >
+                    <ChevronDown
+                      className={`size-4 transition-transform ${chipsOpen ? "rotate-180" : ""}`}
+                      strokeWidth={1.8}
+                    />
+                    {chipsOpen ? "Свернуть подсказки" : "Показать подсказки"}
+                  </button>
                 </div>
+                {chipsOpen && (
+                  <div className="mt-3 flex flex-wrap gap-3">
+                    {suggestions.map((s) => (
+                      <button
+                        key={s.label}
+                        type="button"
+                        onClick={() => send(s.text)}
+                        className="flex h-11 items-center rounded-xl bg-[#EFEFF1] px-4 text-[14px] text-[#181A25] transition-colors hover:bg-[#E5E5E8] cursor-pointer"
+                      >
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </>
           ) : (
