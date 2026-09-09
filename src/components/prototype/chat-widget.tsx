@@ -165,6 +165,19 @@ function nowTime(): string {
   return new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 }
 
+/* Разбор ответа с контактными данными: почта + имя одним сообщением */
+function parseContact(text: string): { email: string; name: string } | null {
+  const match = text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/);
+  if (!match) return null;
+  const email = match[0];
+  const name = text
+    .replace(email, " ")
+    .replace(/[^\p{L}\s-]+/gu, "")
+    .trim();
+  if (!name) return null;
+  return { email, name: name[0].toUpperCase() + name.slice(1) };
+}
+
 type Msg =
   | { id: number; kind: "user"; text: string }
   | { id: number; kind: "bot"; text: string }
@@ -307,11 +320,47 @@ export default function ChatWidget() {
   const [activeAgent, setActiveAgent] = useState<Agent | null>(null);
   const [typing, setTyping] = useState(false);
   const [chipsOpen, setChipsOpen] = useState(true);
+  /* Инцидент распознан, ждём почту и имя — только потом регистрируем */
+  const [pendingIncident, setPendingIncident] = useState<{
+    direction: Direction;
+    subject: string;
+  } | null>(null);
 
   const nextId = useRef(1);
   const ticketNo = useRef(5721);
   const scrollRef = useRef<HTMLDivElement>(null);
   const newId = () => nextId.current++;
+
+  /* Регистрация инцидента: карточка в диалоге + запись в истории, через 8 с — «Отработан» */
+  function registerIncident(direction: Direction, subject: string) {
+    const no = ticketNo.current++;
+    setMessages((p) => [
+      ...p,
+      {
+        id: newId(),
+        kind: "ticket",
+        direction,
+        ticket: { no, status: "inwork" as TicketStatus },
+      },
+    ]);
+    setTickets((p) => [
+      { no, direction, subject, status: "inwork", date: `сегодня, ${nowTime()}` },
+      ...p,
+    ]);
+    /* Демо жизненного цикла: через 8 секунд инцидент отработан */
+    window.setTimeout(() => {
+      setMessages((p) =>
+        p.map((m) =>
+          m.kind === "ticket" && m.ticket.no === no
+            ? { ...m, ticket: { no, status: "done" as TicketStatus } }
+            : m,
+        ),
+      );
+      setTickets((p) =>
+        p.map((t) => (t.no === no ? { ...t, status: "done" as TicketStatus } : t)),
+      );
+    }, 8000);
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -341,6 +390,32 @@ export default function ChatWidget() {
         setMessages((p) => [...p, { id: newId(), kind: "bot", text: agentReply(text) }]);
         return;
       }
+      /* Ждём почту и имя — только после этого регистрируем инцидент */
+      if (pendingIncident) {
+        const contact = parseContact(text);
+        if (!contact) {
+          setMessages((p) => [
+            ...p,
+            {
+              id: newId(),
+              kind: "bot",
+              text: "Не нашёл почту или имя. Напишите их одним сообщением — например: ivan@company.ru, Иван",
+            },
+          ]);
+          return;
+        }
+        setPendingIncident(null);
+        setMessages((p) => [
+          ...p,
+          {
+            id: newId(),
+            kind: "bot",
+            text: `Спасибо, ${contact.name}! Сохранил почту ${contact.email} — регистрирую инцидент.`,
+          },
+        ]);
+        registerIncident(pendingIncident.direction, pendingIncident.subject);
+        return;
+      }
       /* Умная маршрутизация по семантическим ядрам */
       const { direction, intent } = classify(text);
       setMessages((p) => [
@@ -353,34 +428,19 @@ export default function ChatWidget() {
         }, 2500);
       }
       if (intent === "incident") {
-        const no = ticketNo.current++;
+        /* Проверка аккаунта: привязан только SIP-номер — запрашиваем почту и имя */
+        setPendingIncident({
+          direction,
+          subject: text.length > 48 ? `${text.slice(0, 48)}…` : text,
+        });
         setMessages((p) => [
           ...p,
-          { id: newId(), kind: "ticket", direction, ticket: { no, status: "inwork" as TicketStatus } },
-        ]);
-        setTickets((p) => [
           {
-            no,
-            direction,
-            subject: text.length > 48 ? `${text.slice(0, 48)}…` : text,
-            status: "inwork",
-            date: `сегодня, ${nowTime()}`,
+            id: newId(),
+            kind: "bot",
+            text: "Проверил ваш аккаунт: к нему привязан только SIP-номер, почты нет. Чтобы зарегистрировать инцидент, напишите почту и имя одним сообщением — например: ivan@company.ru, Иван",
           },
-          ...p,
         ]);
-        /* Демо жизненного цикла: через 8 секунд инцидент отработан */
-        window.setTimeout(() => {
-          setMessages((p) =>
-            p.map((m) =>
-              m.kind === "ticket" && m.ticket.no === no
-                ? { ...m, ticket: { no, status: "done" as TicketStatus } }
-                : m,
-            ),
-          );
-          setTickets((p) =>
-            p.map((t) => (t.no === no ? { ...t, status: "done" as TicketStatus } : t)),
-          );
-        }, 8000);
       }
     }, 1100);
   }
@@ -388,6 +448,7 @@ export default function ChatWidget() {
   function pickDialogAgent(a: Agent) {
     setView("chat");
     setActiveAgent(a);
+    setPendingIncident(null);
     setMessages((p) => [
       ...p,
       {
@@ -400,6 +461,7 @@ export default function ChatWidget() {
 
   function pickHelpAgent(a: Agent) {
     setView("chat");
+    setPendingIncident(null);
     setMessages((p) => [
       ...p,
       { id: newId(), kind: "bot", text: `Подключила «${a.name}»: ${a.caption}.` },
@@ -571,7 +633,11 @@ export default function ChatWidget() {
                   onKeyDown={(e) => {
                     if (e.key === "Enter") send(message);
                   }}
-                  placeholder="Например, подключить сотрудник"
+                  placeholder={
+                    pendingIncident
+                      ? "Например: ivan@company.ru, Иван"
+                      : "Например, подключить сотрудник"
+                  }
                   aria-label="Сообщение в чат"
                   className="h-11 w-full rounded-xl bg-[#EFEFF1] px-4 text-[14px] text-[#181A25] outline-none placeholder:text-[#868894]"
                 />

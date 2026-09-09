@@ -145,7 +145,7 @@ export function classify(text: string): { direction: Direction; intent: Intent }
 export function routingAction(intent: Intent, direction: Direction): string {
   switch (intent) {
     case "incident":
-      return "Зарегистрировал инцидент и передал команде эксплуатации. Статус покажу в этом чате.";
+      return "Распознал инцидент. Сейчас проверю ваш аккаунт и зарегистрирую обращение — статус покажу в этом чате.";
     case "review":
       return "Передал отзыв в сервис сбора отзывов. Ответственный сотрудник ответит офлайн — здесь или на почту.";
     case "suggestion":
