@@ -9,6 +9,8 @@ import {
   Sparkles,
   TriangleAlert,
   ChevronDown,
+  Phone,
+  Mail,
 } from "lucide-react";
 import {
   agentReply,
@@ -87,6 +89,27 @@ const helpAgents: Agent[] = [
     name: "Чат-поддержка в лк",
     caption: "Можно позвать оператора",
     avatar: "/agents/lk-support.png",
+  },
+];
+
+/* Прямые каналы связи — блок «Или свяжитесь напрямую» в панели агентов */
+const contacts: {
+  id: string;
+  icon: typeof Phone;
+  title: string;
+  caption: string;
+}[] = [
+  {
+    id: "phone",
+    icon: Phone,
+    title: "8 800 700 06 28",
+    caption: "Среднее время ответа — до 15 минут",
+  },
+  {
+    id: "email",
+    icon: Mail,
+    title: "vassupport@beeline.ru",
+    caption: "Среднее время ответа — до 8 часов",
   },
 ];
 
@@ -497,6 +520,14 @@ export default function ChatWidget() {
                   <AgentCard key={a.id} agent={a} onPick={() => pickHelpAgent(a)} />
                 ))}
               </div>
+              <p className="mt-7 text-[13px] leading-4 text-[#181A25]">
+                Или свяжитесь напрямую
+              </p>
+              <div className="mt-4 flex flex-col gap-3">
+                {contacts.map((c) => (
+                  <ContactRow key={c.id} icon={c.icon} title={c.title} caption={c.caption} />
+                ))}
+              </div>
             </div>
           ) : tab === "history" ? (
             /* История обращений */
@@ -581,6 +612,32 @@ export default function ChatWidget() {
         </section>
       )}
     </>
+  );
+}
+
+function ContactRow({
+  icon: Icon,
+  title,
+  caption,
+}: {
+  icon: typeof Phone;
+  title: string;
+  caption: string;
+}) {
+  return (
+    <div className="flex w-full items-center gap-3 rounded-2xl bg-[#F3F3F5] p-[7px] pr-4">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-[10px] bg-white">
+        <Icon className="size-[18px] text-[#42454C]" strokeWidth={1.7} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[14px] font-medium leading-[18px] text-[#181A25]">
+          {title}
+        </span>
+        <span className="mt-0.5 block truncate text-[13px] leading-4 text-[#868894]">
+          {caption}
+        </span>
+      </span>
+    </div>
   );
 }
 
