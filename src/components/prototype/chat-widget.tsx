@@ -425,7 +425,10 @@ export default function ChatWidget() {
                       <button
                         key={s.label}
                         type="button"
-                        onClick={() => send(s.text)}
+                        onClick={() => {
+                          setChipsOpen(false);
+                          send(s.text);
+                        }}
                         className="flex h-11 items-center rounded-xl bg-[#EFEFF1] px-4 text-[14px] text-[#181A25] transition-colors hover:bg-[#E5E5E8] cursor-pointer"
                       >
                         {s.label}
