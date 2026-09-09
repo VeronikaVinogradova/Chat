@@ -4,6 +4,7 @@ import { useState } from "react";
 import Header from "./header";
 import Sidebar from "./sidebar";
 import MainContent from "./main-content";
+import ChatWidget from "./chat-widget";
 
 export default function PrototypeHome() {
   const [notifOpen, setNotifOpen] = useState(false);
@@ -19,6 +20,7 @@ export default function PrototypeHome() {
         <Sidebar />
         <MainContent />
       </div>
+      <ChatWidget />
     </div>
   );
 }

@@ -3,6 +3,33 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Анимация появления окна чата */
+@keyframes chatPop {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.chat-pop {
+  animation: chatPop 0.18s ease-out;
+}
+/* Аккуратный скроллбар внутри чата */
+.chat-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #d4d4d9 transparent;
+}
+.chat-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: #d4d4d9;
+  border-radius: 999px;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
