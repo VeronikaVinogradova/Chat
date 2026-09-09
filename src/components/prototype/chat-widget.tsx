@@ -99,10 +99,50 @@ const suggestions = [
   { label: "Добавьте тёмную тему", text: "Добавьте тёмную тему в кабинет" },
 ];
 
+/* Первое сообщение бота при открытии чата */
+const GREETING =
+  "Напишите любой вопрос одним сообщением — зарегистрирую инцидент, подключу менеджера или передам отзыв. А ещё помогу настроить АТС по шагам.";
+
 type TicketStatus = "inwork" | "done";
 
+type TicketRec = {
+  no: number;
+  direction: Direction;
+  subject: string;
+  status: TicketStatus;
+  date: string;
+};
+
+/* Ранее заведённые обращения для таба «История» */
+const seedTickets: TicketRec[] = [
+  {
+    no: 5718,
+    direction: "files",
+    subject: "Не загружаются записи звонков в хранилище",
+    status: "done",
+    date: "сегодня, 10:24",
+  },
+  {
+    no: 5703,
+    direction: "services",
+    subject: "Пропадает звук при переадресации",
+    status: "done",
+    date: "вчера, 16:02",
+  },
+  {
+    no: 5687,
+    direction: "settings",
+    subject: "Не сохраняется схема вызова",
+    status: "inwork",
+    date: "вчера, 09:41",
+  },
+];
+
+function nowTime(): string {
+  return new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
 type Msg =
-  | { id: number; kind: "greeting" }
   | { id: number; kind: "user"; text: string }
   | { id: number; kind: "bot"; text: string }
   | { id: number; kind: "route"; direction: Direction; intent: Intent; text: string }
@@ -128,13 +168,6 @@ function StatusBadge({ status }: { status: TicketStatus }) {
 
 function MessageRow({ m }: { m: Msg }) {
   switch (m.kind) {
-    case "greeting":
-      return (
-        <p className="max-w-[300px] text-[14px] leading-5 text-[#181A25]">
-          Напишите любой вопрос одним сообщением — зарегистрирую инцидент, подключу
-          менеджера или передам отзыв. А ещё помогу настроить АТС по шагам.
-        </p>
-      );
     case "user":
       return (
         <div className="ml-auto w-fit max-w-[280px] rounded-2xl rounded-br-md bg-[#1F212D] px-4 py-2.5 text-[14px] leading-5 text-white">
@@ -200,6 +233,31 @@ function MessageRow({ m }: { m: Msg }) {
   }
 }
 
+function HistoryCard({ t }: { t: TicketRec }) {
+  return (
+    <div className="rounded-2xl border border-[#ECECEE] bg-white p-3.5">
+      <div className="flex items-center gap-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[#FDECEC]">
+          <TriangleAlert className="size-[18px] text-[#D64545]" strokeWidth={1.8} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[14px] font-medium leading-[18px] text-[#181A25]">
+              Инцидент №{t.no}
+            </p>
+            <StatusBadge status={t.status} />
+          </div>
+          <p className="mt-0.5 truncate text-[12.5px] leading-4 text-[#868894]">{t.subject}</p>
+        </div>
+      </div>
+      <div className="mt-2.5 flex items-center gap-2">
+        <Chip meta={DIRECTION_META[t.direction]} />
+        <span className="text-[12px] leading-none text-[#9A9CA3]">{t.date}</span>
+      </div>
+    </div>
+  );
+}
+
 function TypingBubble() {
   return (
     <div className="flex w-fit items-center gap-1 rounded-2xl rounded-bl-md bg-[#F3F3F5] px-4 py-3">
@@ -217,8 +275,12 @@ function TypingBubble() {
 export default function ChatWidget() {
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<"chat" | "agents">("chat");
+  const [tab, setTab] = useState<"dialog" | "history">("dialog");
   const [message, setMessage] = useState("");
-  const [messages, setMessages] = useState<Msg[]>([{ id: 0, kind: "greeting" }]);
+  const [messages, setMessages] = useState<Msg[]>([
+    { id: 0, kind: "bot", text: GREETING },
+  ]);
+  const [tickets, setTickets] = useState<TicketRec[]>(seedTickets);
   const [activeAgent, setActiveAgent] = useState<Agent | null>(null);
   const [typing, setTyping] = useState(false);
   const [chipsOpen, setChipsOpen] = useState(true);
@@ -271,7 +333,17 @@ export default function ChatWidget() {
         const no = ticketNo.current++;
         setMessages((p) => [
           ...p,
-          { id: newId(), kind: "ticket", direction, ticket: { no, status: "inwork" } },
+          { id: newId(), kind: "ticket", direction, ticket: { no, status: "inwork" as TicketStatus } },
+        ]);
+        setTickets((p) => [
+          {
+            no,
+            direction,
+            subject: text.length > 48 ? `${text.slice(0, 48)}…` : text,
+            status: "inwork",
+            date: `сегодня, ${nowTime()}`,
+          },
+          ...p,
         ]);
         /* Демо жизненного цикла: через 8 секунд инцидент отработан */
         window.setTimeout(() => {
@@ -281,6 +353,9 @@ export default function ChatWidget() {
                 ? { ...m, ticket: { no, status: "done" as TicketStatus } }
                 : m,
             ),
+          );
+          setTickets((p) =>
+            p.map((t) => (t.no === no ? { ...t, status: "done" as TicketStatus } : t)),
           );
         }, 8000);
       }
@@ -366,7 +441,71 @@ export default function ChatWidget() {
             </div>
           </div>
 
-          {view === "chat" ? (
+          {/* Табы: текущий диалог / история */}
+          {view === "chat" && (
+            <div className="flex shrink-0 gap-6 border-b border-[#F1F1F3] px-6">
+              <button
+                type="button"
+                onClick={() => setTab("dialog")}
+                className={`relative pb-3 text-[14px] transition-colors cursor-pointer ${
+                  tab === "dialog"
+                    ? "font-medium text-[#181A25]"
+                    : "text-[#868894] hover:text-[#42454C]"
+                }`}
+              >
+                Текущий диалог
+                {tab === "dialog" && (
+                  <span className="absolute inset-x-0 -bottom-px h-[3px] rounded-full bg-[#FDD835]" />
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("history")}
+                className={`relative pb-3 text-[14px] transition-colors cursor-pointer ${
+                  tab === "history"
+                    ? "font-medium text-[#181A25]"
+                    : "text-[#868894] hover:text-[#42454C]"
+                }`}
+              >
+                История
+                <span className="ml-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#F1F1F3] px-1 text-[11px] font-medium text-[#868894]">
+                  {tickets.length}
+                </span>
+                {tab === "history" && (
+                  <span className="absolute inset-x-0 -bottom-px h-[3px] rounded-full bg-[#FDD835]" />
+                )}
+              </button>
+            </div>
+          )}
+
+          {view === "agents" ? (
+            /* Выбор агентов */
+            <div className="chat-scroll flex-1 overflow-y-auto px-6 pb-6 pt-1">
+              <p className="text-[13px] leading-4 text-[#181A25]">
+                Выбери агента для диалога
+              </p>
+              <div className="mt-4 flex flex-col gap-3">
+                {dialogAgents.map((a) => (
+                  <AgentCard key={a.id} agent={a} onPick={() => pickDialogAgent(a)} />
+                ))}
+              </div>
+              <p className="mt-7 text-[13px] leading-4 text-[#181A25]">
+                Выбери другой тип помощи
+              </p>
+              <div className="mt-4 flex flex-col gap-3">
+                {helpAgents.map((a) => (
+                  <AgentCard key={a.id} agent={a} onPick={() => pickHelpAgent(a)} />
+                ))}
+              </div>
+            </div>
+          ) : tab === "history" ? (
+            /* История обращений */
+            <div className="chat-scroll flex-1 space-y-3 overflow-y-auto px-6 pb-6 pt-4">
+              {tickets.map((t) => (
+                <HistoryCard key={t.no} t={t} />
+              ))}
+            </div>
+          ) : (
             <>
               {/* Диалог */}
               <div ref={scrollRef} className="chat-scroll flex-1 space-y-3 overflow-y-auto px-6 pt-3">
@@ -438,26 +577,6 @@ export default function ChatWidget() {
                 )}
               </div>
             </>
-          ) : (
-            /* Выбор агентов */
-            <div className="chat-scroll flex-1 overflow-y-auto px-6 pb-6 pt-1">
-              <p className="text-[13px] leading-4 text-[#181A25]">
-                Выбери агента для диалога
-              </p>
-              <div className="mt-4 flex flex-col gap-3">
-                {dialogAgents.map((a) => (
-                  <AgentCard key={a.id} agent={a} onPick={() => pickDialogAgent(a)} />
-                ))}
-              </div>
-              <p className="mt-7 text-[13px] leading-4 text-[#181A25]">
-                Выбери другой тип помощи
-              </p>
-              <div className="mt-4 flex flex-col gap-3">
-                {helpAgents.map((a) => (
-                  <AgentCard key={a.id} agent={a} onPick={() => pickHelpAgent(a)} />
-                ))}
-              </div>
-            </div>
           )}
         </section>
       )}
