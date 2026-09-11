@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Phone,
   Mail,
+  Inbox,
 } from "lucide-react";
 import {
   agentReply,
@@ -113,18 +114,45 @@ const contacts: {
   },
 ];
 
-/* Подсказки покрывают все ветки маршрутизации для юзабилити-теста */
-const suggestions = [
-  { label: "Выбрать услуги", text: "Хочу выбрать услуги для АТС" },
-  { label: "Загрузить номера", text: "Загрузить номера" },
-  { label: "Не работает запись звонков", text: "Не работает запись звонков" },
-  { label: "Спасибо менеджеру!", text: "Спасибо менеджеру, всё решили быстро!" },
-  { label: "Добавьте тёмную тему", text: "Добавьте тёмную тему в кабинет" },
+/* Подсказки покрывают 4 ключевых сценария юзабилити-теста;
+   special включает особый флоу вместо маршрутизации:
+   setup/tariff — подключение ИИ-агента, incident — выбор действия перед заведением */
+const suggestions: { label: string; text: string; special?: "setup" | "tariff" | "incident" }[] = [
+  {
+    label: "Помочь настроить",
+    text: "Помогите настроить переадресацию звонков",
+    special: "setup",
+  },
+  { label: "Что-то не работает", text: "Что-то не работает: не сохраняется схема вызова", special: "incident" },
+  {
+    label: "Не хватает нового функционала",
+    text: "Не хватает функционала — добавьте тёмную тему",
+  },
+  { label: "Вопросы про тариф", text: "Вопрос про тариф", special: "tariff" },
 ];
 
 /* Первое сообщение бота при открытии чата */
 const GREETING =
   "Напишите любой вопрос одним сообщением — зарегистрирую инцидент, подключу менеджера или передам отзыв. А ещё помогу настроить АТС по шагам.";
+
+/* Сообщения флоу инцидента: пользователь описал проблему — сразу заводим */
+const DIRECT_INCIDENT_TEXT =
+  "Распознал инцидент. Завожу обращение — статус покажу в этом чате.";
+
+const DETAILS_ASK =
+  "Расскажите подробнее, что именно не работает и когда это началось — так команде будет проще разобраться.";
+
+const DETAILS_OK = "Принял, спасибо за подробности! Регистрирую инцидент.";
+
+/* Сообщения флоу продуктового предложения */
+const SUGGESTION_ASK =
+  "Опишите, какого функционала вам не хватает. И какую задачу вы хотите решить.";
+
+const SUGGESTION_SENT =
+  "Ваше сообщение отправлено в команду разработки Облачной АТС. Спасибо, что написали! Оставьте номер телефона и имя, если хотите, чтобы мы связались с вами.";
+
+const SUGGESTION_CONTACTS_OK =
+  "Спасибо! Сохранил контакты — команда разработки Облачной АТС сможет связаться с вами.";
 
 type TicketStatus = "inwork" | "done";
 
@@ -136,52 +164,35 @@ type TicketRec = {
   date: string;
 };
 
-/* Ранее заведённые обращения для таба «История» */
-const seedTickets: TicketRec[] = [
-  {
-    no: 5718,
-    direction: "files",
-    subject: "Не загружаются записи звонков в хранилище",
-    status: "done",
-    date: "сегодня, 10:24",
-  },
-  {
-    no: 5703,
-    direction: "services",
-    subject: "Пропадает звук при переадресации",
-    status: "done",
-    date: "вчера, 16:02",
-  },
-  {
-    no: 5687,
-    direction: "settings",
-    subject: "Не сохраняется схема вызова",
-    status: "inwork",
-    date: "вчера, 09:41",
-  },
-];
-
 function nowTime(): string {
   return new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 }
 
-/* Разбор ответа с контактными данными: почта + имя одним сообщением */
-function parseContact(text: string): { email: string; name: string } | null {
-  const match = text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/);
-  if (!match) return null;
-  const email = match[0];
-  const name = text
-    .replace(email, " ")
-    .replace(/[^\p{L}\s-]+/gu, "")
-    .trim();
-  if (!name) return null;
-  return { email, name: name[0].toUpperCase() + name.slice(1) };
+/* Тема тикета: длинный текст обрезаем */
+function truncSubject(text: string): string {
+  return text.length > 48 ? `${text.slice(0, 48)}…` : text;
 }
+
+/* Есть ли в сообщении телефон (для необязательных контактов в флоу предложения) */
+function hasPhone(text: string): boolean {
+  return text.replace(/\D/g, "").length >= 10;
+}
+
+/* Флоу инцидента (чип «Что-то не работает»): выбор действия → (опционально) детали → регистрация */
+type IncidentFlow = {
+  stage: "choice" | "details";
+  direction: Direction;
+  subject: string;
+};
+
+/* Флоу продуктового предложения: описание → (необязательно) контакты */
+type SuggestionFlow = { stage: "description" | "contacts" };
 
 type Msg =
   | { id: number; kind: "user"; text: string }
   | { id: number; kind: "bot"; text: string }
   | { id: number; kind: "route"; direction: Direction; intent: Intent; text: string }
+  | { id: number; kind: "choice"; chosen: "create" | "details" | null }
   | { id: number; kind: "ticket"; direction: Direction; ticket: { no: number; status: TicketStatus } }
   | { id: number; kind: "manager"; name: string };
 
@@ -202,7 +213,13 @@ function StatusBadge({ status }: { status: TicketStatus }) {
   );
 }
 
-function MessageRow({ m }: { m: Msg }) {
+function MessageRow({
+  m,
+  onChoose,
+}: {
+  m: Msg;
+  onChoose: (id: number, choice: "create" | "details") => void;
+}) {
   switch (m.kind) {
     case "user":
       return (
@@ -252,6 +269,34 @@ function MessageRow({ m }: { m: Msg }) {
               <span className="text-[12px] leading-none text-[#9A9CA3]">статус обновится здесь</span>
             )}
           </div>
+        </div>
+      );
+    case "choice":
+      return (
+        <div className="flex max-w-[310px] flex-wrap gap-2">
+          {m.chosen === null ? (
+            <>
+              <button
+                type="button"
+                onClick={() => onChoose(m.id, "create")}
+                className="flex h-10 items-center rounded-xl bg-[#1F212D] px-4 text-[14px] font-medium text-white transition-opacity hover:opacity-90 cursor-pointer"
+              >
+                Завести инцидент
+              </button>
+              <button
+                type="button"
+                onClick={() => onChoose(m.id, "details")}
+                className="flex h-10 items-center rounded-xl bg-[#EFEFF1] px-4 text-[14px] text-[#181A25] transition-colors hover:bg-[#E5E5E8] cursor-pointer"
+              >
+                Описать подробнее проблему
+              </button>
+            </>
+          ) : (
+            <span className="flex h-10 items-center gap-1.5 rounded-xl bg-[#EFEFF1] px-4 text-[14px] text-[#868894]">
+              <Check className="size-4" strokeWidth={2} />
+              {m.chosen === "create" ? "Завести инцидент" : "Описать подробнее проблему"}
+            </span>
+          )}
         </div>
       );
     case "manager":
@@ -316,15 +361,14 @@ export default function ChatWidget() {
   const [messages, setMessages] = useState<Msg[]>([
     { id: 0, kind: "bot", text: GREETING },
   ]);
-  const [tickets, setTickets] = useState<TicketRec[]>(seedTickets);
+  const [tickets, setTickets] = useState<TicketRec[]>([]);
   const [activeAgent, setActiveAgent] = useState<Agent | null>(null);
   const [typing, setTyping] = useState(false);
   const [chipsOpen, setChipsOpen] = useState(true);
-  /* Инцидент распознан, ждём почту и имя — только потом регистрируем */
-  const [pendingIncident, setPendingIncident] = useState<{
-    direction: Direction;
-    subject: string;
-  } | null>(null);
+  /* Флоу инцидента: выбор действия → детали → регистрация */
+  const [incidentFlow, setIncidentFlow] = useState<IncidentFlow | null>(null);
+  /* Флоу продуктового предложения */
+  const [suggestionFlow, setSuggestionFlow] = useState<SuggestionFlow | null>(null);
 
   const nextId = useRef(1);
   const ticketNo = useRef(5721);
@@ -371,13 +415,32 @@ export default function ChatWidget() {
     return () => document.removeEventListener("keydown", onKey);
   }, [open]);
 
-  /* Автоскролл к последнему сообщению */
+  /* Автоскролл к последнему сообщению (в т.ч. при возврате на таб диалога) */
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [messages, typing, view]);
+  }, [messages, typing, view, tab]);
 
-  function send(raw: string) {
+  /* Клик по кнопке выбора в сценарии инцидента */
+  function chooseIncident(id: number, choice: "create" | "details") {
+    setMessages((p) =>
+      p.map((m) => (m.id === id && m.kind === "choice" ? { ...m, chosen: choice } : m)),
+    );
+    if (!incidentFlow) return;
+    setTyping(true);
+    window.setTimeout(() => {
+      setTyping(false);
+      if (choice === "create") {
+        /* «Завести инцидент» — создаём обращение сразу */
+        registerIncident(incidentFlow.direction, incidentFlow.subject);
+      } else {
+        setMessages((p) => [...p, { id: newId(), kind: "bot", text: DETAILS_ASK }]);
+        setIncidentFlow({ ...incidentFlow, stage: "details" });
+      }
+    }, 900);
+  }
+
+  function send(raw: string, special?: "setup" | "tariff" | "incident") {
     const text = raw.trim();
     if (!text) return;
     setMessages((p) => [...p, { id: newId(), kind: "user", text }]);
@@ -385,42 +448,90 @@ export default function ChatWidget() {
     setTyping(true);
     window.setTimeout(() => {
       setTyping(false);
-      if (activeAgent) {
-        /* Режим ИИ-агента: помощь по настройке АТС */
-        setMessages((p) => [...p, { id: newId(), kind: "bot", text: agentReply(text) }]);
-        return;
-      }
-      /* Ждём почту и имя — только после этого регистрируем инцидент */
-      if (pendingIncident) {
-        const contact = parseContact(text);
-        if (!contact) {
-          setMessages((p) => [
-            ...p,
-            {
-              id: newId(),
-              kind: "bot",
-              text: "Не нашёл почту или имя. Напишите их одним сообщением — например: ivan@company.ru, Иван",
-            },
-          ]);
-          return;
-        }
-        setPendingIncident(null);
+      /* Чипсы «Помочь настроить» и «Вопросы про тариф»: подключаем ИИ-агента */
+      if (special === "setup" || special === "tariff") {
+        const agent = special === "setup" ? dialogAgents[1] : dialogAgents[0];
+        setIncidentFlow(null);
+        setSuggestionFlow(null);
+        setActiveAgent(agent);
         setMessages((p) => [
           ...p,
           {
             id: newId(),
             kind: "bot",
-            text: `Спасибо, ${contact.name}! Сохранил почту ${contact.email} — регистрирую инцидент.`,
+            text:
+              special === "setup"
+                ? `Подключаю агента: ${agent.name} — поможет настроить услуги АТС по шагам. Опишите задачу.`
+                : `Подключаю агента: ${agent.name} — проконсультирует по тарифам и пакетам. Задайте вопрос.`,
           },
         ]);
-        registerIncident(pendingIncident.direction, pendingIncident.subject);
         return;
+      }
+      /* Чип «Что-то не работает»: перед заведением инцидента — выбор действия */
+      if (special === "incident") {
+        const { direction, intent } = classify(text);
+        setActiveAgent(null);
+        setSuggestionFlow(null);
+        setIncidentFlow({ stage: "choice", direction, subject: truncSubject(text) });
+        setMessages((p) => [
+          ...p,
+          {
+            id: newId(),
+            kind: "route",
+            direction,
+            intent,
+            text: routingAction(intent, direction),
+          },
+        ]);
+        setMessages((p) => [...p, { id: newId(), kind: "choice", chosen: null }]);
+        return;
+      }
+      if (activeAgent) {
+        /* Режим ИИ-агента: помощь по настройке АТС */
+        setMessages((p) => [...p, { id: newId(), kind: "bot", text: agentReply(text) }]);
+        return;
+      }
+      /* Флоу инцидента: текст вместо кнопок = описание проблемы → сразу заводим */
+      if (incidentFlow) {
+        if (incidentFlow.stage === "choice") {
+          /* Отмечаем ожидающие кнопки как выбранный путь «Описать подробнее» */
+          setMessages((p) =>
+            p.map((m) =>
+              m.kind === "choice" && m.chosen === null ? { ...m, chosen: "details" as const } : m,
+            ),
+          );
+        }
+        setIncidentFlow(null);
+        setMessages((p) => [...p, { id: newId(), kind: "bot", text: DETAILS_OK }]);
+        registerIncident(incidentFlow.direction, truncSubject(text));
+        return;
+      }
+      /* Флоу предложения: описание → отправка команде → контакты по желанию */
+      if (suggestionFlow) {
+        if (suggestionFlow.stage === "description") {
+          setSuggestionFlow({ stage: "contacts" });
+          setMessages((p) => [...p, { id: newId(), kind: "bot", text: SUGGESTION_SENT }]);
+          return;
+        }
+        if (hasPhone(text)) {
+          setSuggestionFlow(null);
+          setMessages((p) => [...p, { id: newId(), kind: "bot", text: SUGGESTION_CONTACTS_OK }]);
+          return;
+        }
+        setSuggestionFlow(null); /* без контактов — обычная маршрутизация */
       }
       /* Умная маршрутизация по семантическим ядрам */
       const { direction, intent } = classify(text);
       setMessages((p) => [
         ...p,
-        { id: newId(), kind: "route", direction, intent, text: routingAction(intent, direction) },
+        {
+          id: newId(),
+          kind: "route",
+          direction,
+          intent,
+          text:
+            intent === "incident" ? DIRECT_INCIDENT_TEXT : routingAction(intent, direction),
+        },
       ]);
       if (intent === "support") {
         window.setTimeout(() => {
@@ -428,19 +539,16 @@ export default function ChatWidget() {
         }, 2500);
       }
       if (intent === "incident") {
-        /* Проверка аккаунта: привязан только SIP-номер — запрашиваем почту и имя */
-        setPendingIncident({
-          direction,
-          subject: text.length > 48 ? `${text.slice(0, 48)}…` : text,
-        });
-        setMessages((p) => [
-          ...p,
-          {
-            id: newId(),
-            kind: "bot",
-            text: "Проверил ваш аккаунт: к нему привязан только SIP-номер, почты нет. Чтобы зарегистрировать инцидент, напишите почту и имя одним сообщением — например: ivan@company.ru, Иван",
-          },
-        ]);
+        /* Пользователь сам описал проблему — сразу заводим инцидент */
+        setTyping(true);
+        window.setTimeout(() => {
+          setTyping(false);
+          registerIncident(direction, truncSubject(text));
+        }, 900);
+      }
+      if (intent === "suggestion") {
+        setSuggestionFlow({ stage: "description" });
+        setMessages((p) => [...p, { id: newId(), kind: "bot", text: SUGGESTION_ASK }]);
       }
     }, 1100);
   }
@@ -448,7 +556,8 @@ export default function ChatWidget() {
   function pickDialogAgent(a: Agent) {
     setView("chat");
     setActiveAgent(a);
-    setPendingIncident(null);
+    setIncidentFlow(null);
+    setSuggestionFlow(null);
     setMessages((p) => [
       ...p,
       {
@@ -461,7 +570,8 @@ export default function ChatWidget() {
 
   function pickHelpAgent(a: Agent) {
     setView("chat");
-    setPendingIncident(null);
+    setIncidentFlow(null);
+    setSuggestionFlow(null);
     setMessages((p) => [
       ...p,
       { id: newId(), kind: "bot", text: `Подключила «${a.name}»: ${a.caption}.` },
@@ -553,9 +663,11 @@ export default function ChatWidget() {
                 }`}
               >
                 История
-                <span className="ml-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#F1F1F3] px-1 text-[11px] font-medium text-[#868894]">
-                  {tickets.length}
-                </span>
+                {tickets.length > 0 && (
+                  <span className="ml-1.5 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-[#F1F1F3] px-1 text-[11px] font-medium text-[#868894]">
+                    {tickets.length}
+                  </span>
+                )}
                 {tab === "history" && (
                   <span className="absolute inset-x-0 -bottom-px h-[3px] rounded-full bg-[#FDD835]" />
                 )}
@@ -592,18 +704,30 @@ export default function ChatWidget() {
               </div>
             </div>
           ) : tab === "history" ? (
-            /* История обращений */
-            <div className="chat-scroll flex-1 space-y-3 overflow-y-auto px-6 pb-6 pt-4">
-              {tickets.map((t) => (
-                <HistoryCard key={t.no} t={t} />
-              ))}
-            </div>
+            tickets.length === 0 ? (
+              /* Пустая история: как при первом входе */
+              <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 pb-16 text-center">
+                <span className="flex size-12 items-center justify-center rounded-full bg-[#F3F3F5]">
+                  <Inbox className="size-6 text-[#868894]" strokeWidth={1.7} />
+                </span>
+                <p className="max-w-[240px] text-[13.5px] leading-[18px] text-[#868894]">
+                  Здесь пока пусто. Обращения и их статусы появятся после вашего первого вопроса.
+                </p>
+              </div>
+            ) : (
+              /* История обращений */
+              <div className="chat-scroll flex-1 space-y-3 overflow-y-auto px-6 pb-6 pt-4">
+                {tickets.map((t) => (
+                  <HistoryCard key={t.no} t={t} />
+                ))}
+              </div>
+            )
           ) : (
             <>
               {/* Диалог */}
               <div ref={scrollRef} className="chat-scroll flex-1 space-y-3 overflow-y-auto px-6 pt-3">
                 {messages.map((m) => (
-                  <MessageRow key={m.id} m={m} />
+                  <MessageRow key={m.id} m={m} onChoose={chooseIncident} />
                 ))}
                 {typing && <TypingBubble />}
               </div>
@@ -634,9 +758,15 @@ export default function ChatWidget() {
                     if (e.key === "Enter") send(message);
                   }}
                   placeholder={
-                    pendingIncident
-                      ? "Например: ivan@company.ru, Иван"
-                      : "Например, подключить сотрудник"
+                    incidentFlow?.stage === "details"
+                      ? "Опишите, что именно не работает"
+                      : incidentFlow?.stage === "choice"
+                        ? "Или опишите проблему своими словами"
+                        : suggestionFlow?.stage === "description"
+                          ? "Опишите функционал и задачу"
+                          : suggestionFlow?.stage === "contacts"
+                            ? "Номер телефона и имя — по желанию"
+                            : "Например, подключить сотрудник"
                   }
                   aria-label="Сообщение в чат"
                   className="h-11 w-full rounded-xl bg-[#EFEFF1] px-4 text-[14px] text-[#181A25] outline-none placeholder:text-[#868894]"
@@ -663,7 +793,7 @@ export default function ChatWidget() {
                         type="button"
                         onClick={() => {
                           setChipsOpen(false);
-                          send(s.text);
+                          send(s.text, s.special);
                         }}
                         className="flex h-11 items-center rounded-xl bg-[#EFEFF1] px-4 text-[14px] text-[#181A25] transition-colors hover:bg-[#E5E5E8] cursor-pointer"
                       >
